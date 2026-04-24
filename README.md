@@ -1,4 +1,4 @@
-# dad_music
+# bookmarks-to-mp3
 
 把 Chrome 匯出的書籤 HTML 裡**指定資料夾**內的 YouTube 影片批次下載成 MP3，檔案經完整性驗證後用書籤標題重新命名，適合拷進 USB 給車機播放。
 
