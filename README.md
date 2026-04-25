@@ -44,7 +44,7 @@ TARGET_FOLDER = "錄音"   # 改成你書籤裡的資料夾名稱
 打開 `parse_bookmarks.py` 最後面，確認路徑對應到你的書籤檔：
 
 ```python
-main(root / "bookmarks_2026_4_24.html", root / "videos.tsv")
+main(root / "bookmarks_2026_4_25.html", root / "videos.tsv")
 ```
 
 ### 4. 依序執行四個階段

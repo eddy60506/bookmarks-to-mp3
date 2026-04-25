@@ -114,4 +114,4 @@ def main(html_path: Path, out_path: Path) -> None:
 
 if __name__ == "__main__":
     root = Path(__file__).parent
-    main(root / "bookmarks_2026_4_24.html", root / "videos.tsv")
+    main(root / "bookmarks_2026_4_25.html", root / "videos.tsv")
