@@ -45,7 +45,7 @@ mp3/{bookmark_title}.mp3
 - **`parse_bookmarks.py` 的 `TARGET_FOLDER` 常數**控制抓哪個資料夾。Chrome 書籤 HTML 的資料夾階層必須用 `HTMLParser` 追蹤 `<H3>`/`<DL>` 配對（regex 做不到），parser 裡用 `_folder_stack` 在進入 `<DL>` 時 push、退出時 pop。
 
 - **`download.py` 的檔名模板 `%(id)s__%(title).150B.%(ext)s`**：
-  - `id` 前綴讓 `already_downloaded()` 能用 `glob("{id}__*.mp3")` 跳過已完成檔案，支援中斷後重跑
+  - `id` 前綴是 `scan_downloaded_ids()` 的快路徑（檔名 glob）；`rename_to_bookmark.py` 把前綴拿掉後，回退讀 ID3 `purl` tag 反查 video id。少了 fallback，重跑會把已重命名的檔當成沒下載再抓一次（曾經踩過這個坑）。
   - `.150B` 是位元組截斷，中文字（UTF-8 3 bytes）約 50 字上限，避免 macOS 檔名長度問題
   - 因此下載階段的檔名≠最終檔名，不要拿下載階段的 `mp3/` 內容去找「正確名字」
 

@@ -3,7 +3,7 @@
 設計重點：
 - yt-dlp Python API（而非 subprocess）：更可靠、進度可控
 - ThreadPoolExecutor 並行 4 個 worker
-- 跳過已完成檔案（以 video id 在檔名前綴）
+- 跳過已完成檔案（檔名 `id__` 前綴；被重命名過的檔回退讀 ID3 purl tag）
 - 嵌入 ID3 metadata 讓車載系統顯示曲名
 - 失敗列進 failed.tsv 供下一輪重試
 
@@ -12,9 +12,12 @@ Fail-fast：如果 yt-dlp 回報錯誤，紀錄後繼續下一支，不偷偷吞
 
 from __future__ import annotations
 
+import re
+import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
@@ -23,6 +26,8 @@ ROOT = Path(__file__).parent
 OUT_DIR = ROOT / "mp3"
 LOG_DIR = ROOT / "logs"
 WORKERS = 4
+
+ID_PREFIX_RE = re.compile(r"^([A-Za-z0-9_-]{11})__")
 
 
 def make_ydl_opts(out_dir: Path, log_file: Path) -> dict:
@@ -51,17 +56,49 @@ def make_ydl_opts(out_dir: Path, log_file: Path) -> dict:
     }
 
 
-def already_downloaded(video_id: str, out_dir: Path) -> Path | None:
-    matches = list(out_dir.glob(f"{video_id}__*.mp3"))
-    return matches[0] if matches else None
+def read_purl_video_id(path: Path) -> str | None:
+    """讀 mp3 的 ID3 purl tag 反查 YouTube video id。失敗回 None。"""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format_tags=purl",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True, check=True, timeout=10,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    purl = result.stdout.strip()
+    if not purl:
+        return None
+    parsed = urlparse(purl)
+    if parsed.path == "/watch":
+        q = parse_qs(parsed.query)
+        if q.get("v"):
+            return q["v"][0]
+    if "youtu.be" in parsed.netloc:
+        return parsed.path.lstrip("/").split("/")[0] or None
+    return None
+
+
+def scan_downloaded_ids(out_dir: Path) -> set[str]:
+    """掃描 out_dir，回傳已下載的 video id 集合。
+
+    優先看檔名 `{id}__` 前綴；前綴被 rename_to_bookmark.py 拿掉的，回退讀 ID3 purl tag。
+    缺了 fallback 的話，rename 過的檔案會被當成「沒下載」重抓一次。
+    """
+    ids: set[str] = set()
+    for f in out_dir.glob("*.mp3"):
+        m = ID_PREFIX_RE.match(f.name)
+        if m:
+            ids.add(m.group(1))
+            continue
+        vid = read_purl_video_id(f)
+        if vid:
+            ids.add(vid)
+    return ids
 
 
 def download_one(video_id: str, url: str, title: str) -> tuple[str, str, str, str | None]:
     """下載單支影片。回傳 (video_id, url, title, error or None)。"""
-    existing = already_downloaded(video_id, OUT_DIR)
-    if existing is not None:
-        return video_id, url, title, None
-
     log_file = LOG_DIR / f"{video_id}.log"
     opts = make_ydl_opts(OUT_DIR, log_file)
     try:
@@ -86,14 +123,24 @@ def main() -> int:
         vid, url, title = line.split("\t", 2)
         entries.append((vid, url, title))
 
-    total = len(entries)
-    print(f"共 {total} 支影片，{WORKERS} 個 worker 並行下載", file=sys.stderr)
+    existing_ids = scan_downloaded_ids(OUT_DIR)
+    todo = [e for e in entries if e[0] not in existing_ids]
+    total = len(todo)
+    print(
+        f"videos.tsv {len(entries)} 支，已下載 {len(entries) - total} 支，"
+        f"待下載 {total} 支（{WORKERS} 個 worker）",
+        file=sys.stderr,
+    )
+
+    if not todo:
+        print("沒有要下載的", file=sys.stderr)
+        return 0
 
     failures: list[tuple[str, str, str, str]] = []
     completed = 0
 
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-        futures = {pool.submit(download_one, v, u, t): (v, u, t) for v, u, t in entries}
+        futures = {pool.submit(download_one, v, u, t): (v, u, t) for v, u, t in todo}
         for fut in as_completed(futures):
             vid, url, title, err = fut.result()
             completed += 1
